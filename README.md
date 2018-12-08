@@ -20,7 +20,7 @@ Add the plugin to your rebar config:
 Then just call your plugin directly in an existing application:
 
 
-    $ rebar3 rebar3_reloader
+    $ rebar3 reloader
     ===> Fetching rebar3_reloader
     ===> Compiling rebar3_reloader
     <Plugin Output>

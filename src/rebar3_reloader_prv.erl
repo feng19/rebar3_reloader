@@ -1,7 +1,7 @@
 -module(rebar3_reloader_prv).
 
 -export([init/1, do/1, format_error/1]).
--export([reloader_1/0, reloader/1]).
+-export([reloader_1/1, reloader/1]).
 
 -define(PROVIDER, reloader).
 -define(DEPS, [compile]).
@@ -60,8 +60,7 @@ init(State) ->
 do(State) ->
     spawn(
         fun() ->
-            listen_on_project_apps(State),
-            ?MODULE:reloader_1()
+            ?MODULE:reloader_1(State)
         end),
     rebar_prv_shell:do(State).
 
@@ -69,12 +68,13 @@ do(State) ->
 format_error(Reason) ->
     io_lib:format("~p", [Reason]).
 
-reloader_1() ->
+reloader_1(RebarState) ->
     case whereis(rebar_agent) of
         undefined ->
             timer:sleep(100),
-            ?MODULE:reloader_1();
+            ?MODULE:reloader_1(RebarState);
         _ ->
+            listen_on_project_apps(RebarState),
             Time = application:get_env(rebar, reloader_wait_stop_change_time, 500),
             CMD = application:get_env(rebar, reloader_compile_cmd, "rebar3 compile"),
             ValidExtensions = [Ext || Ext <- application:get_env(rebar, reloader_extra_exts, []), is_binary(Ext)]
@@ -113,17 +113,17 @@ reloader(State) ->
                     % sleep here so messages can bottle up
                     % or we can flush after compile?
                     timer:sleep(200),
-                    flush(State)
+                    flush(State#state.time),
+                    compile_and_reload_beam(State)
             end;
         _ ->
             ?MODULE:reloader(State)
     end.
 
-flush(State) ->
+flush(Time) ->
     receive
-        _ -> flush(State)
-    after State#state.time ->
-        compile_and_reload_beam(State)
+        _ -> flush(Time)
+    after Time -> ok
     end.
 
 compile_and_reload_beam(State) ->
@@ -142,10 +142,9 @@ compile_and_reload_beam(State) ->
 
     Modules = [M || {M, _} <- Modules1 ++ NewAddModules],
     ExcludedModules = lists:usort([M || {M, _} <- ExcludedModules1] ++ ExcludedModules0),
+    flush(State#state.time),
     ?MODULE:reloader(State#state{
-        last_time = Now,
-        modules = Modules,
-        excluded_modules = ExcludedModules}).
+        last_time = Now, modules = Modules, excluded_modules = ExcludedModules}).
 
 listen_on_project_apps(State) ->
     CheckoutDeps = [AppInfo ||
@@ -166,15 +165,15 @@ listen_on_project_apps(State) ->
 
 partition_modules(ExcludedModules0) ->
     LibDir = code:lib_dir(),
-    {ok, CWD} = file:get_cwd(),
-    Rebar3Dir = filename:join(CWD, "rebar3"),
+    Script = hd(init:get_plain_arguments()),
+    Rebar3Dir = filename:absname(Script),
     lists:partition(
         fun({M, File}) ->
-            not code:is_sticky(M) andalso filelib:is_file(File)
+            not code:is_sticky(M)
                 andalso not lists:member(M, ExcludedModules0)
                 andalso not lists:prefix(LibDir, File)
                 andalso not lists:prefix(Rebar3Dir, File)
-        end, code:all_loaded()).
+        end, [E || {_, File} = E <- code:all_loaded(), filelib:is_file(File)]).
 
 %% @private takes a list of modules and reloads them
 -spec reload_modules([module()], calendar:datetime()) -> term().
@@ -183,9 +182,6 @@ reload_modules(Modules0, LastTime) ->
     Modules = [M || {M, File} <- Modules0, is_changed(File, LastTime)],
     reload_modules_do(Modules, erlang:function_exported(code, prepare_loading, 1)).
 
-%% @spec is_changed(atom()) -> boolean()
-%% @doc true if the loaded module is a beam with a vsn attribute
-%%      and does not match the on-disk beam file, returns false otherwise.
 is_changed(Filename, LastTime) ->
     case file:read_file_info(Filename) of
         {ok, #file_info{mtime = Mtime}} ->
@@ -199,7 +195,7 @@ reload_modules_do(Modules, true) ->
     %% OTP 19 and later -- use atomic loading and ignore unloadable mods
     case code:prepare_loading(Modules) of
         {ok, Prepared} ->
-            rebar_api:debug("Reloading ~w ... ok.", [Prepared]),
+            rebar_api:info("Reloading Modules:~w.", [Modules]),
             [code:purge(M) || M <- Modules],
             code:finish_loading(Prepared);
         {error, ModRsns} ->
@@ -225,7 +221,7 @@ reload_modules_do(Modules, false) ->
             code:purge(M),
             case code:load_file(M) of
                 {module, M} ->
-                    rebar_api:debug("Reloading ~p ... ok.", [M]),
+                    rebar_api:info("Reloading ~p ... ok.", [M]),
                     ok;
                 {error, Error} ->
                     rebar_api:debug("Module ~p failed to load because ~p", [M, Error])
