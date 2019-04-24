@@ -7,4 +7,5 @@
               {modules,[]},
               {maintainers,["feng19"]},
               {licenses,["Apache 2.0"]},
-              {links,[]}]}.
+              {links,[{"Github","https://github.com/feng19/rebar3_reloader"}]}]}.
+
