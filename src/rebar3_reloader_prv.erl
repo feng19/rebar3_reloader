@@ -1,7 +1,11 @@
 -module(rebar3_reloader_prv).
 
 -export([init/1, do/1, format_error/1]).
--export([reloader_1/1, reloader/1]).
+-export([
+    reloader_1/1,
+    reloader/1,
+    suspend/1
+]).
 
 -define(PROVIDER, reloader).
 -define(DEPS, [compile]).
@@ -116,6 +120,8 @@ reloader(State) ->
                     flush(State#state.time),
                     compile_and_reload_beam(State)
             end;
+        suspend ->
+            ?MODULE:suspend();
         _ ->
             ?MODULE:reloader(State)
     end.
@@ -126,21 +132,27 @@ flush(Time) ->
     after Time -> ok
     end.
 
+suspend(State) ->
+    receive
+        resume ->
+            ?MODULE:reloader(State);
+        _ ->
+            ?MODULE:suspend(State)
+    end.
+
 compile_and_reload_beam(State) ->
     io:format(os:cmd(State#state.cmd)),
-    ExcludedModules0 = State#state.excluded_modules,
-
-    {Modules0, ExcludedModules1} = partition_modules(ExcludedModules0),
     Now = erlang:localtime(),
+    ExcludedModules0 = State#state.excluded_modules,
+    {Modules0, ExcludedModules1} = partition_modules(ExcludedModules0),
     OldMods = State#state.modules,
-    {Modules1, NewAddModules} = lists:partition(
+    {NeedModules, _NewAddModules} = lists:partition(
         fun({M, _File}) ->
             lists:member(M, OldMods) orelse lists:member(M, ExcludedModules0)
         end, Modules0),
+    reload_modules(NeedModules, State#state.last_time),
 
-    reload_modules(Modules1, State#state.last_time),
-
-    Modules = [M || {M, _} <- Modules1 ++ NewAddModules],
+    Modules = lists:usort([M || {M, _} <- Modules0] ++ OldMods),
     ExcludedModules = lists:usort([M || {M, _} <- ExcludedModules1] ++ ExcludedModules0),
     flush(State#state.time),
     ?MODULE:reloader(State#state{
@@ -191,6 +203,7 @@ is_changed(Filename, LastTime) ->
     end.
 
 %% @private reloading modules, when there are modules to actually reload
+reload_modules_do([], _) -> noop;
 reload_modules_do(Modules, true) ->
     %% OTP 19 and later -- use atomic loading and ignore unloadable mods
     case code:prepare_loading(Modules) of

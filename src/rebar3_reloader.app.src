@@ -1,12 +1,10 @@
-{application, rebar3_reloader, [
-    {description, "auto compile & reload new beam"},
-    {vsn, "0.1.0"},
-    {registered, []},
-    {applications, [kernel, stdlib]},
-    {env, []},
-    {modules, []},
-
-    {maintainers, ["feng19"]},
-    {licenses, ["Apache 2.0"]},
-    {links, []}
-]}.
+{application,rebar3_reloader,
+             [{description,"auto compile & reload new beam"},
+              {vsn,"0.2.0"},
+              {registered,[]},
+              {applications,[kernel,stdlib]},
+              {env,[]},
+              {modules,[]},
+              {maintainers,["feng19"]},
+              {licenses,["Apache 2.0"]},
+              {links,[]}]}.
